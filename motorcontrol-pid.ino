@@ -1,48 +1,35 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
-#include <PID_v1.h>
 #include <Servo.h>
 
 const short maxRegen = 50;
-const short vBattMax = 15;
-const short kP = 3;
-const short kI = 100;
-const short kD = 0.9;
 
-short throttlePin = A0;
-short iMotorPin = A1;
-short vBattPin = A2;
-short rotorPin = 3;
+short throttlePin = A3;
+short speedPin = A2;
+short rotorPin = 11;
 short statorPin = 9;
+short rpmPin = 3;
 
 double throttle = 0;
 short regen = 0;
-double iMotor = 0;
-double rotorTarget = 255;
-float vBatt = 0.0;
-short socBatt = 0;
+short speed = 0;
+short rpm = 0;
+short rotorTarget = 0;
 
-U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R1, /* reset=*/ U8X8_PIN_NONE);
-PID myPID(&iMotor, &rotorTarget, &throttle, kP, kI, kD, DIRECT);
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R3, /* reset=*/ U8X8_PIN_NONE);
 Servo stator;
 
 void setup(void) {
   u8g2.begin();
+  TCCR2B = TCCR2B & B11111000 | B00000010; //Settings pwm freq higher
   pinMode(rotorPin, OUTPUT);
-  myPID.SetSampleTime(50);
-  myPID.SetMode(AUTOMATIC);
   stator.attach(statorPin, 1000, 2000);
+  pinMode(rpmPin, INPUT);
 }
 
 void loop(void) {
   calcEngineParams();
 
-  myPID.Compute();
-  
-  if (rotorTarget < 255) {
-    rotorTarget++;
-  }
-  
   analogWrite(rotorPin, rotorTarget);
   stator.write(throttle);
 
@@ -64,14 +51,13 @@ void calcEngineParams(void) {
     regen = map(userThrottle, 10, 0, 0, maxRegen);
   }
 
-  // measure vBatt
-  vBatt = analogRead(vBattPin) / 37.63;
-  if (throttle > 0) {
-    socBatt = map(vBatt, 0, vBattMax, 0, 100);
-  }
+  speed = map(analogRead(speedPin), 0, 1023, 0, 255);
+  rotorTarget = 255 - speed;
 
-  // Measure voltage across a motor winding
-  iMotor = map(analogRead(iMotorPin), 0, 1023, -30, 30);
+  double pulse =  pulseIn(rpmPin, HIGH);
+  if (pulse > 0) {
+    rpm = (1 / pulse) * 30000000;
+  }
 }
 
 void drawBar(float value, int maxValue, short index, const char *label, const char *unit, int precision) {
@@ -97,10 +83,8 @@ void drawBar(float value, int maxValue, short index, const char *label, const ch
 void draw(void) {
   drawBar(throttle / 1.8, 100, 0, "Throttle", "%", 0);
   drawBar(regen, 100, 1, "Regen", "%", 0);
-  drawBar(rotorTarget, 255, 2, "rTarget", "~", 0);
-  drawBar(iMotor, 30, 3, "iMotor", "A", 1);
-  drawBar(vBatt, 20, 4, "vBatt", "V", 1);
-  drawBar(socBatt, 100, 5, "Charge", "%", 0);
+  drawBar(speed, 255, 2, "rpm", "", 0);
+  drawBar(rpm, 15000, 3, "H", "", 0);
 }
 
 float analogToPercentage(int pin) {
