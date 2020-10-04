@@ -5,37 +5,36 @@
 #include <RunningAverage.h>
 
 const short maxRegen = 50;
-const short kP = 3;
-const short kI = 100;
+const short kP = 1;
+const short kI = 10;
 const short kD = 0.9;
 
 short throttlePin = A3;
 short aStatorPin = A0;
 short rotorPin = 11;
 short statorPin = 9;
-short rpmPin = 3;
 
 double throttle = 0;
-double tSmth = 0;
+double aStatorAvg = 0;
 short regen = 0;
-short rpm = 0;
 double rotorTarget = 0;
-double aStator = 0; //0 - 255 scale
-short aScale = 255;
+double rotorPwm = 0;
+double aStator = 0;
 
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R3, /* reset=*/ U8X8_PIN_NONE);
-PID rotorPID(&aStator, &rotorTarget, &tSmth, kP, kI, kD, DIRECT);
+PID rotorPID(&aStator, &rotorTarget, &aStatorAvg, kP, kI, kD, DIRECT);
 Servo stator;
-RunningAverage raThrottle(5);
+RunningAverage raStator(5);
+RunningAverage raStatorAvg(100);
 
 void setup(void) {
   u8g2.begin();
   TCCR2B = TCCR2B & B11111000 | B00000010; //Settings pwm freq higher
 
-  raThrottle.clear();
+  raStator.clear();
+  raStatorAvg.clear();
   pinMode(rotorPin, OUTPUT);
   stator.attach(statorPin, 1000, 2000);
-  pinMode(rpmPin, INPUT);
   rotorPID.SetMode(AUTOMATIC);
 }
 
@@ -43,7 +42,8 @@ void loop(void) {
   calcEngineParams();
   rotorPID.Compute();
 
-  analogWrite(rotorPin, rotorTarget);
+  rotorPwm = map(rotorTarget, 0, 255, 255, 35);
+  analogWrite(rotorPin, rotorPwm);
   stator.write(throttle);
 
   u8g2.setFont(u8g2_font_5x7_mr);
@@ -66,29 +66,19 @@ void calcEngineParams(void) {
     regen = map(userThrottle, 10, 0, 0, maxRegen);
   }
 
-  raThrottle.addValue(throttle);
-  tSmth = min(raThrottle.getAverage(), throttle);
+  raStator.addValue(analogRead(aStatorPin));
+  aStator = raStator.getAverage();
 
-  aStator = map(min(analogRead(aStatorPin), 510), 0, 510, 1, aScale);
-
-  if (aStator > throttle + 10) {
-    aScale--;
-  }
-
-  double pulse =  pulseIn(rpmPin, HIGH, 10000);
-  if (pulse > 0) {
-    rpm = (1 / pulse) * 30000000;
-  }
+  raStatorAvg.addValue(aStator);
+  aStatorAvg = raStatorAvg.getAverage() - regen;
 }
 
 void draw(void) {
   drawBar(throttle / 1.8, 100, 0, "Throttle", "%", 0);
   drawBar(regen, 100, 1, "Regen", "%", 0);
-  drawBar(aStator, aScale, 2, "Current", "A", 2);
-  drawBar(rpm, 15000, 3, "rpm", "", 0);
-  drawBar(255 - rotorTarget, 255, 4, "Rotor", "~", 0);
-  drawBar(tSmth, 180, 5, "tSmth", "~", 0);
-  drawBar(aScale, 255, 6, "aScale", "", 0);
+  drawBar(aStator, 1023, 2, "Current", "", 0);
+  drawBar(aStatorAvg, 1023, 3, "CurrAvg", "", 0);
+  drawBar(rotorPwm, 255, 4, "Rotor", "~", 0);
 }
 
 void drawBar(float value, int maxValue, short index, const char *label, const char *unit, int precision) {
